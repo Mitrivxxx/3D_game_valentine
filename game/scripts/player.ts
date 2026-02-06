@@ -77,7 +77,8 @@ export function createPlayer(parent: THREE.Object3D, tileSize: number): PlayerCo
   parent.add(mesh);
 
   function isWalkable(pos: GridPos) {
-    return MAP[pos.y]?.[pos.x] === 1;
+    const tile = MAP[pos.y]?.[pos.x];
+    return tile === 1 || tile === 2 || tile === 3;
   }
 
   function moveTo(pos: GridPos) {

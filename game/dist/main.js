@@ -21114,6 +21114,133 @@ class Scene extends Object3D {
     return data;
   }
 }
+class CylinderGeometry extends BufferGeometry {
+  constructor(radiusTop = 1, radiusBottom = 1, height = 1, radialSegments = 32, heightSegments = 1, openEnded = false, thetaStart = 0, thetaLength = Math.PI * 2) {
+    super();
+    this.type = "CylinderGeometry";
+    this.parameters = {
+      radiusTop,
+      radiusBottom,
+      height,
+      radialSegments,
+      heightSegments,
+      openEnded,
+      thetaStart,
+      thetaLength
+    };
+    const scope = this;
+    radialSegments = Math.floor(radialSegments);
+    heightSegments = Math.floor(heightSegments);
+    const indices = [];
+    const vertices = [];
+    const normals = [];
+    const uvs = [];
+    let index = 0;
+    const indexArray = [];
+    const halfHeight = height / 2;
+    let groupStart = 0;
+    generateTorso();
+    if (openEnded === false) {
+      if (radiusTop > 0)
+        generateCap(true);
+      if (radiusBottom > 0)
+        generateCap(false);
+    }
+    this.setIndex(indices);
+    this.setAttribute("position", new Float32BufferAttribute(vertices, 3));
+    this.setAttribute("normal", new Float32BufferAttribute(normals, 3));
+    this.setAttribute("uv", new Float32BufferAttribute(uvs, 2));
+    function generateTorso() {
+      const normal = new Vector3;
+      const vertex2 = new Vector3;
+      let groupCount = 0;
+      const slope = (radiusBottom - radiusTop) / height;
+      for (let y = 0;y <= heightSegments; y++) {
+        const indexRow = [];
+        const v = y / heightSegments;
+        const radius = v * (radiusBottom - radiusTop) + radiusTop;
+        for (let x = 0;x <= radialSegments; x++) {
+          const u = x / radialSegments;
+          const theta = u * thetaLength + thetaStart;
+          const sinTheta = Math.sin(theta);
+          const cosTheta = Math.cos(theta);
+          vertex2.x = radius * sinTheta;
+          vertex2.y = -v * height + halfHeight;
+          vertex2.z = radius * cosTheta;
+          vertices.push(vertex2.x, vertex2.y, vertex2.z);
+          normal.set(sinTheta, slope, cosTheta).normalize();
+          normals.push(normal.x, normal.y, normal.z);
+          uvs.push(u, 1 - v);
+          indexRow.push(index++);
+        }
+        indexArray.push(indexRow);
+      }
+      for (let x = 0;x < radialSegments; x++) {
+        for (let y = 0;y < heightSegments; y++) {
+          const a = indexArray[y][x];
+          const b = indexArray[y + 1][x];
+          const c = indexArray[y + 1][x + 1];
+          const d = indexArray[y][x + 1];
+          indices.push(a, b, d);
+          indices.push(b, c, d);
+          groupCount += 6;
+        }
+      }
+      scope.addGroup(groupStart, groupCount, 0);
+      groupStart += groupCount;
+    }
+    function generateCap(top) {
+      const centerIndexStart = index;
+      const uv = new Vector2;
+      const vertex2 = new Vector3;
+      let groupCount = 0;
+      const radius = top === true ? radiusTop : radiusBottom;
+      const sign = top === true ? 1 : -1;
+      for (let x = 1;x <= radialSegments; x++) {
+        vertices.push(0, halfHeight * sign, 0);
+        normals.push(0, sign, 0);
+        uvs.push(0.5, 0.5);
+        index++;
+      }
+      const centerIndexEnd = index;
+      for (let x = 0;x <= radialSegments; x++) {
+        const u = x / radialSegments;
+        const theta = u * thetaLength + thetaStart;
+        const cosTheta = Math.cos(theta);
+        const sinTheta = Math.sin(theta);
+        vertex2.x = radius * sinTheta;
+        vertex2.y = halfHeight * sign;
+        vertex2.z = radius * cosTheta;
+        vertices.push(vertex2.x, vertex2.y, vertex2.z);
+        normals.push(0, sign, 0);
+        uv.x = cosTheta * 0.5 + 0.5;
+        uv.y = sinTheta * 0.5 * sign + 0.5;
+        uvs.push(uv.x, uv.y);
+        index++;
+      }
+      for (let x = 0;x < radialSegments; x++) {
+        const c = centerIndexStart + x;
+        const i = centerIndexEnd + x;
+        if (top === true) {
+          indices.push(i, i + 1, c);
+        } else {
+          indices.push(i + 1, i, c);
+        }
+        groupCount += 3;
+      }
+      scope.addGroup(groupStart, groupCount, top === true ? 1 : 2);
+      groupStart += groupCount;
+    }
+  }
+  copy(source) {
+    super.copy(source);
+    this.parameters = Object.assign({}, source.parameters);
+    return this;
+  }
+  static fromJSON(data) {
+    return new CylinderGeometry(data.radiusTop, data.radiusBottom, data.height, data.radialSegments, data.heightSegments, data.openEnded, data.thetaStart, data.thetaLength);
+  }
+}
 class SphereGeometry extends BufferGeometry {
   constructor(radius = 1, widthSegments = 32, heightSegments = 16, phiStart = 0, phiLength = Math.PI * 2, thetaStart = 0, thetaLength = Math.PI) {
     super();
@@ -22378,28 +22505,20 @@ function createCamera() {
 
 // scripts/map.ts
 var BOARD_ROTATION_Y = Math.PI / 4;
-var MAP = [
-  [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-  [1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 1],
-  [1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 0, 1],
-  [1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1],
-  [1, 0, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1],
-  [1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
-  [1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1],
-  [1, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1],
-  [1, 0, 1, 0, 1, 1, 1, 1, 0, 1, 0, 1],
-  [1, 0, 1, 0, 0, 0, 0, 1, 0, 0, 2, 1],
-  [1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1],
-  [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
-];
+var MAP_ROWS = 12;
+var MAP_COLS = 12;
+var MAP = generateMaze(MAP_ROWS, MAP_COLS);
 function getColumnTopY(x, y, tileSize) {
-  if (MAP[y]?.[x] !== 1) {
+  const tile = MAP[y]?.[x];
+  if (tile !== 1 && tile !== 2 && tile !== 3) {
     return null;
+  }
+  if (tile === 2 || tile === 3) {
+    return getGoalColumnHeight(tileSize);
   }
   const blockSize = tileSize * 0.8;
   const blockGap = tileSize * 0.01;
-  const heightJitter = 0.85 + tileNoise(x, y) * 0.35;
-  const columnHeight = tileSize * 1.4 * heightJitter;
+  const columnHeight = getColumnHeight(x, y, tileSize);
   const blockStep = blockSize + blockGap;
   const blockCount = Math.max(4, Math.floor(columnHeight / blockStep));
   return blockSize + (blockCount - 1) * blockStep;
@@ -22407,6 +22526,100 @@ function getColumnTopY(x, y, tileSize) {
 function tileNoise(x, y) {
   const v = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
   return v - Math.floor(v);
+}
+function getColumnHeight(x, y, tileSize) {
+  const heightJitter = 0.85 + tileNoise(x, y) * 0.35;
+  return tileSize * 1.4 * heightJitter;
+}
+function getGoalColumnHeight(tileSize) {
+  return tileSize * 4;
+}
+function shuffle(items) {
+  for (let i = items.length - 1;i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [items[i], items[j]] = [items[j], items[i]];
+  }
+  return items;
+}
+function generateMaze(rows, cols) {
+  const map = Array.from({ length: rows }, () => Array(cols).fill(0));
+  const inBounds = (x, y) => x > 0 && y > 0 && x < cols - 1 && y < rows - 1;
+  const directions = [
+    { x: 0, y: -2 },
+    { x: 2, y: 0 },
+    { x: 0, y: 2 },
+    { x: -2, y: 0 }
+  ];
+  const start = { x: 1, y: 1 };
+  function carve(x, y) {
+    map[y][x] = 1;
+    const shuffled = shuffle([...directions]);
+    for (const dir of shuffled) {
+      const nx = x + dir.x;
+      const ny = y + dir.y;
+      if (!inBounds(nx, ny) || map[ny][nx] !== 0) {
+        continue;
+      }
+      const betweenX = x + dir.x / 2;
+      const betweenY = y + dir.y / 2;
+      map[betweenY][betweenX] = 1;
+      carve(nx, ny);
+    }
+  }
+  carve(start.x, start.y);
+  const goal = findFarthestCell(map, start);
+  if (goal) {
+    map[goal.y][goal.x] = 2;
+  }
+  const secondGoal = findFarthestCell(map, goal ?? start);
+  if (secondGoal) {
+    map[secondGoal.y][secondGoal.x] = 3;
+  }
+  return map;
+}
+function findFarthestCell(map, start) {
+  const rows = map.length;
+  const cols = map[0]?.length ?? 0;
+  const distances = Array.from({ length: rows }, () => Array(cols).fill(-1));
+  const queue = [];
+  distances[start.y][start.x] = 0;
+  queue.push(start);
+  const dirs = [
+    { x: 0, y: -1 },
+    { x: 1, y: 0 },
+    { x: 0, y: 1 },
+    { x: -1, y: 0 }
+  ];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) {
+      break;
+    }
+    for (const dir of dirs) {
+      const nx = current.x + dir.x;
+      const ny = current.y + dir.y;
+      if (ny < 0 || ny >= rows || nx < 0 || nx >= cols) {
+        continue;
+      }
+      if (map[ny][nx] !== 1 || distances[ny][nx] !== -1) {
+        continue;
+      }
+      distances[ny][nx] = distances[current.y][current.x] + 1;
+      queue.push({ x: nx, y: ny });
+    }
+  }
+  let best = null;
+  let bestDistance = -1;
+  for (let y = 0;y < rows; y++) {
+    for (let x = 0;x < cols; x++) {
+      const distance = distances[y][x];
+      if (distance > bestDistance) {
+        bestDistance = distance;
+        best = { x, y };
+      }
+    }
+  }
+  return best;
 }
 function buildBoard(scene, tileSize) {
   const walls = [];
@@ -22416,9 +22629,8 @@ function buildBoard(scene, tileSize) {
   const blockSize = tileSize * 0.8;
   const blockGap = tileSize * 0.01;
   const blockGeo = new BoxGeometry(blockSize, blockSize, blockSize);
-  const goalBaseGeo = new BoxGeometry(tileSize * 0.5, 0.18, tileSize * 0.32);
-  const goalLidGeo = new BoxGeometry(tileSize * 0.52, 0.12, tileSize * 0.34);
-  const goalBandGeo = new BoxGeometry(tileSize * 0.06, 0.16, tileSize * 0.36);
+  const goalHeight = getGoalColumnHeight(tileSize);
+  const goalColumnGeo = new CylinderGeometry(tileSize * 0.18, tileSize * 0.2, goalHeight, 20);
   const floorMat = new MeshStandardMaterial({
     color: 16249848,
     roughness: 0.95,
@@ -22429,17 +22641,17 @@ function buildBoard(scene, tileSize) {
     roughness: 0.9,
     metalness: 0.05
   });
-  const goldMat = new MeshStandardMaterial({
-    color: 13935418,
-    roughness: 0.35,
-    metalness: 0.8,
-    emissive: 2365960
-  });
   const goalMat = new MeshStandardMaterial({
-    color: 15836863,
-    roughness: 0.6,
-    metalness: 0.2,
-    emissive: 2820888
+    color: 14753070,
+    roughness: 0.4,
+    metalness: 0.15,
+    emissive: 2753288
+  });
+  const altGoalMat = new MeshStandardMaterial({
+    color: 1483594,
+    roughness: 0.4,
+    metalness: 0.15,
+    emissive: 402447
   });
   const rows = MAP.length;
   const cols = MAP[0]?.length ?? 0;
@@ -22455,8 +22667,7 @@ function buildBoard(scene, tileSize) {
       boardGroup.add(floor);
       if (tile === 1) {
         const wallGroup = new Group;
-        const heightJitter = 0.85 + tileNoise(x, y) * 0.35;
-        const columnHeight = tileSize * 1.4 * heightJitter;
+        const columnHeight = getColumnHeight(x, y, tileSize);
         const blockStep = blockSize + blockGap;
         const blockCount = Math.max(4, Math.floor(columnHeight / blockStep));
         for (let i = 0;i < blockCount; i++) {
@@ -22468,20 +22679,10 @@ function buildBoard(scene, tileSize) {
         boardGroup.add(wallGroup);
         walls.push({ x, y });
       }
-      if (tile === 2) {
-        const goalGroup = new Group;
-        const base = new Mesh(goalBaseGeo, goalMat);
-        base.position.y = 0.1;
-        goalGroup.add(base);
-        const band = new Mesh(goalBandGeo, goldMat);
-        band.position.y = 0.1;
-        goalGroup.add(band);
-        const lid = new Mesh(goalLidGeo, goalMat);
-        lid.position.y = 0.22;
-        lid.rotation.x = -0.15;
-        goalGroup.add(lid);
-        goalGroup.position.set(posX, 0, posZ);
-        boardGroup.add(goalGroup);
+      if (tile === 2 || tile === 3) {
+        const goalColumn = new Mesh(goalColumnGeo, tile === 2 ? goalMat : altGoalMat);
+        goalColumn.position.set(posX, goalHeight * 0.5, posZ);
+        boardGroup.add(goalColumn);
       }
     }
   }
@@ -22546,7 +22747,8 @@ function createPlayer(parent, tileSize) {
   mesh.position.set(world.x, world.y, world.z);
   parent.add(mesh);
   function isWalkable(pos) {
-    return MAP[pos.y]?.[pos.x] === 1;
+    const tile = MAP[pos.y]?.[pos.x];
+    return tile === 1 || tile === 2 || tile === 3;
   }
   function moveTo(pos) {
     if (!isWalkable(pos)) {
