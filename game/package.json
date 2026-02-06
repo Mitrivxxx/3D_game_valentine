@@ -1,0 +1,18 @@
+{
+  "name": "game2d-valentine",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun build ./main.ts --outfile=./dist/main.js",
+    "dev": "bun build ./main.ts --outfile=./dist/main.js --watch",
+    "serve": "bunx serve .",
+    "dev:serve": "concurrently \"bun run dev\" \"bun run serve\""
+  },
+  "dependencies": {
+    "three": "^0.160.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.160.0",
+    "concurrently": "^8.2.2"
+  }
+}
