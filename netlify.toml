@@ -1,0 +1,4 @@
+[build]
+base = "game"
+command = "bun run build"
+publish = "."
