@@ -25605,6 +25605,38 @@ if (typeof window !== "undefined") {
   }
 }
 
+// scripts/camera.ts
+var BASE_CAMERA_POSITION = new Vector3(5.5, 11, 5.5);
+var MOBILE_REFERENCE_WIDTH = 600;
+var MOBILE_MAX_SCALE = 1.6;
+function createCamera() {
+  const camera = new PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+  applyCameraViewport(camera, window.innerWidth, window.innerHeight);
+  return camera;
+}
+function applyCameraViewport(camera, width, height) {
+  const safeWidth = Math.max(1, width);
+  const safeHeight = Math.max(1, height);
+  const scale = Math.min(MOBILE_MAX_SCALE, Math.max(1, MOBILE_REFERENCE_WIDTH / safeWidth));
+  const position = BASE_CAMERA_POSITION.clone().multiplyScalar(scale);
+  camera.aspect = safeWidth / safeHeight;
+  camera.position.copy(position);
+  camera.userData.basePosition = position.clone();
+  camera.lookAt(0, 0, 0);
+  camera.updateProjectionMatrix();
+}
+function updateCameraFocus(camera, target, zoomT) {
+  const basePosition = camera.userData.basePosition instanceof Vector3 ? camera.userData.basePosition : camera.position.clone();
+  const t = MathUtils.clamp(zoomT, 0, 1);
+  const baseDistance = basePosition.length();
+  const focusDistance = baseDistance * MathUtils.lerp(1, 0.45, t);
+  const focusDirection = basePosition.clone().normalize();
+  const focusPosition = target.clone().add(focusDirection.multiplyScalar(focusDistance));
+  const lookAtPosition = new Vector3().lerpVectors(new Vector3, target, t);
+  camera.position.lerpVectors(basePosition, focusPosition, t);
+  camera.lookAt(lookAtPosition);
+}
+
 // node_modules/three/examples/jsm/utils/BufferGeometryUtils.js
 function toTrianglesDrawMode(geometry, drawMode) {
   if (drawMode === TrianglesDrawMode) {
@@ -28082,38 +28114,6 @@ function addPrimitiveAttributes(geometry, primitiveDef, parser) {
   });
 }
 
-// scripts/camera.ts
-var BASE_CAMERA_POSITION = new Vector3(5.5, 11, 5.5);
-var MOBILE_REFERENCE_WIDTH = 600;
-var MOBILE_MAX_SCALE = 1.6;
-function createCamera() {
-  const camera = new PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
-  applyCameraViewport(camera, window.innerWidth, window.innerHeight);
-  return camera;
-}
-function applyCameraViewport(camera, width, height) {
-  const safeWidth = Math.max(1, width);
-  const safeHeight = Math.max(1, height);
-  const scale = Math.min(MOBILE_MAX_SCALE, Math.max(1, MOBILE_REFERENCE_WIDTH / safeWidth));
-  const position = BASE_CAMERA_POSITION.clone().multiplyScalar(scale);
-  camera.aspect = safeWidth / safeHeight;
-  camera.position.copy(position);
-  camera.userData.basePosition = position.clone();
-  camera.lookAt(0, 0, 0);
-  camera.updateProjectionMatrix();
-}
-function updateCameraFocus(camera, target, zoomT) {
-  const basePosition = camera.userData.basePosition instanceof Vector3 ? camera.userData.basePosition : camera.position.clone();
-  const t = MathUtils.clamp(zoomT, 0, 1);
-  const baseDistance = basePosition.length();
-  const focusDistance = baseDistance * MathUtils.lerp(1, 0.45, t);
-  const focusDirection = basePosition.clone().normalize();
-  const focusPosition = target.clone().add(focusDirection.multiplyScalar(focusDistance));
-  const lookAtPosition = new Vector3().lerpVectors(new Vector3, target, t);
-  camera.position.lerpVectors(basePosition, focusPosition, t);
-  camera.lookAt(lookAtPosition);
-}
-
 // scripts/map.ts
 var BOARD_ROTATION_Y = Math.PI / 4;
 var POLE_DIMENSIONS = {
@@ -28538,6 +28538,56 @@ function buildBoard(scene, tileSize) {
   return { walls, group: boardGroup, rotatingEmojis, goalMarkers };
 }
 
+// scripts/gameSetup.ts
+var TILE_SIZE = 1;
+var SAD_EMOJI_COUNT = 18;
+function initAudio() {
+  const gameOverSound = new Audio("/audio/game_over.wav");
+  const victorySound = new Audio("/audio/victory.wav");
+  const jumpSound = new Audio("/audio/jump.wav");
+  const musicLoop = new Audio("/audio/game_music_loop.wav");
+  musicLoop.loop = true;
+  musicLoop.volume = 0.4;
+  jumpSound.volume = 0.6;
+  victorySound.volume = 0.75;
+  gameOverSound.volume = 0.75;
+  let hasStartedMusic = false;
+  return {
+    gameOverSound,
+    victorySound,
+    jumpSound,
+    musicLoop,
+    get hasStartedMusic() {
+      return hasStartedMusic;
+    },
+    set hasStartedMusic(value) {
+      hasStartedMusic = value;
+    }
+  };
+}
+function initSadEmojis(scene) {
+  const sadEmojis = new Group;
+  sadEmojis.visible = false;
+  scene.add(sadEmojis);
+  return sadEmojis;
+}
+function initGameSetup(scene) {
+  const board = buildBoard(scene, TILE_SIZE);
+  const heartGoal = board.goalMarkers.find((goal) => goal.type === "heart") ?? null;
+  const sadGoal = board.goalMarkers.find((goal) => goal.type === "sad") ?? null;
+  const sadEmojis = initSadEmojis(scene);
+  const audio = initAudio();
+  return {
+    TILE_SIZE,
+    board,
+    heartGoal,
+    sadGoal,
+    sadEmojis,
+    sadEmojiCount: SAD_EMOJI_COUNT,
+    audio
+  };
+}
+
 // scripts/player.ts
 var MOVE_KEYS = {
   ArrowUp: { x: 0, z: -1 },
@@ -28859,6 +28909,172 @@ function createPlayer(parent, tileSize, options = {}) {
   };
 }
 
+// scripts/playerSetup.ts
+function createGamePlayer({
+  board,
+  tileSize,
+  audio,
+  goals,
+  sadEmojis,
+  ui
+}) {
+  let hasGameOver = false;
+  let hasWon = false;
+  let player;
+  player = createPlayer(board.group, tileSize, {
+    modelUrl: "/model/player.glb",
+    onMoveStart: () => {
+      if (!audio.hasStartedMusic) {
+        audio.hasStartedMusic = true;
+        audio.musicLoop.play().catch(() => {
+          return;
+        });
+      }
+      audio.jumpSound.currentTime = 0;
+      audio.jumpSound.play().catch(() => {
+        return;
+      });
+    },
+    onMoveComplete: (pos) => {
+      if (hasGameOver || hasWon) {
+        return;
+      }
+      if (goals.sadGoal && pos.x === goals.sadGoal.gridX && pos.y === goals.sadGoal.gridY) {
+        hasGameOver = true;
+        board.group.visible = false;
+        sadEmojis.visible = true;
+        document.body.classList.add("game-over");
+        if (ui.titleElement) {
+          ui.titleElement.textContent = "how could you do that";
+        }
+        audio.gameOverSound.currentTime = 0;
+        audio.gameOverSound.play().catch(() => {
+          return;
+        });
+        if (ui.restartButton) {
+          ui.restartButton.textContent = "play again";
+          ui.restartButton.classList.remove("is-hidden");
+        }
+        ui.hardButton?.classList.add("is-hidden");
+        return;
+      }
+      if (goals.heartGoal && pos.x === goals.heartGoal.gridX && pos.y === goals.heartGoal.gridY) {
+        hasWon = true;
+        goals.heartGoal.group.visible = false;
+        player.startDance();
+        audio.victorySound.currentTime = 0;
+        audio.victorySound.play().catch(() => {
+          return;
+        });
+        if (ui.titleElement) {
+          ui.titleElement.textContent = "I love you";
+        }
+        if (ui.restartButton) {
+          ui.restartButton.textContent = "play again";
+          ui.restartButton.classList.remove("is-hidden");
+        }
+        ui.hardButton?.classList.remove("is-hidden");
+      }
+    }
+  });
+  return player;
+}
+
+// scripts/sadEmojis.ts
+function loadSadEmojis({
+  group,
+  tileSize,
+  count,
+  modelUrl = "/model/sad_emoji.glb",
+  tint = 3900150,
+  emissive = 728391,
+  spreadMultiplier = 4.8,
+  heightMultiplier = 1.6
+}) {
+  const modelLoader = new GLTFLoader;
+  modelLoader.load(modelUrl, (gltf) => {
+    const template = gltf.scene;
+    const box = new Box3().setFromObject(template);
+    const size = new Vector3;
+    box.getSize(size);
+    const desiredHeight = tileSize * heightMultiplier;
+    const scale = size.y > 0 ? desiredHeight / size.y : 1;
+    const spread = tileSize * spreadMultiplier;
+    const tintColor = new Color(tint);
+    for (let i = 0;i < count; i++) {
+      const emoji = template.clone(true);
+      emoji.scale.setScalar(scale * (0.75 + Math.random() * 0.7));
+      emoji.position.set((Math.random() - 0.5) * spread * 2, tileSize * (0.5 + Math.random() * 1.2), (Math.random() - 0.5) * spread * 2);
+      emoji.rotation.y = Math.random() * Math.PI * 2;
+      emoji.traverse((child) => {
+        if (child instanceof Mesh) {
+          if (Array.isArray(child.material)) {
+            child.material = child.material.map((material) => {
+              const next = material.clone();
+              if ("color" in next && next.color) {
+                next.color.set(tintColor);
+              }
+              if ("emissive" in next && next.emissive) {
+                next.emissive.set(emissive);
+              }
+              return next;
+            });
+          } else {
+            const next = child.material.clone();
+            if ("color" in next && next.color) {
+              next.color.set(tintColor);
+            }
+            if ("emissive" in next && next.emissive) {
+              next.emissive.set(emissive);
+            }
+            child.material = next;
+          }
+        }
+      });
+      group.add(emoji);
+    }
+  }, undefined, (error) => {
+    console.warn("Failed to load sad emoji model", error);
+  });
+  return group;
+}
+
+// scripts/urlCleanup.ts
+function cleanupUrlSearchParams() {
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get("hard") === "1") {
+    urlParams.delete("hard");
+    urlParams.delete("mode");
+    urlParams.delete("size");
+    const cleanUrl = new URL(window.location.href);
+    cleanUrl.search = urlParams.toString();
+    window.history.replaceState({}, "", cleanUrl.toString());
+    return;
+  }
+  if (urlParams.get("mode") !== "hard") {
+    if (urlParams.has("size") || urlParams.has("mode")) {
+      urlParams.delete("size");
+      urlParams.delete("mode");
+      const cleanUrl = new URL(window.location.href);
+      cleanUrl.search = urlParams.toString();
+      window.history.replaceState({}, "", cleanUrl.toString());
+    }
+  }
+}
+function buildRestartUrl() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("mode");
+  url.searchParams.delete("size");
+  return url.toString();
+}
+function buildHardModeUrl(size = "12") {
+  const url = new URL(window.location.href);
+  url.searchParams.set("mode", "hard");
+  url.searchParams.set("hard", "1");
+  url.searchParams.set("size", size);
+  return url.toString();
+}
+
 // main.ts
 var scene = new Scene;
 scene.background = new Color(16638442);
@@ -28870,39 +29086,16 @@ var restartButton = document.getElementById("restart-button");
 var hardButton = document.getElementById("hard-button");
 var titleElement = document.getElementById("game-title");
 var restartLabel = "Zacznij od nowa";
-var urlParams = new URLSearchParams(window.location.search);
-if (urlParams.get("hard") === "1") {
-  urlParams.delete("hard");
-  urlParams.delete("mode");
-  urlParams.delete("size");
-  const cleanUrl = new URL(window.location.href);
-  cleanUrl.search = urlParams.toString();
-  window.history.replaceState({}, "", cleanUrl.toString());
-} else if (urlParams.get("mode") !== "hard") {
-  if (urlParams.has("size") || urlParams.has("mode")) {
-    urlParams.delete("size");
-    urlParams.delete("mode");
-    const cleanUrl = new URL(window.location.href);
-    cleanUrl.search = urlParams.toString();
-    window.history.replaceState({}, "", cleanUrl.toString());
-  }
-}
+cleanupUrlSearchParams();
 if (restartButton) {
   restartButton.textContent = restartLabel;
   restartButton.addEventListener("click", () => {
-    const url = new URL(window.location.href);
-    url.searchParams.delete("mode");
-    url.searchParams.delete("size");
-    window.location.href = url.toString();
+    window.location.href = buildRestartUrl();
   });
 }
 if (hardButton) {
   hardButton.addEventListener("click", () => {
-    const url = new URL(window.location.href);
-    url.searchParams.set("mode", "hard");
-    url.searchParams.set("hard", "1");
-    url.searchParams.set("size", "12");
-    window.location.href = url.toString();
+    window.location.href = buildHardModeUrl();
   });
 }
 var ambient = new AmbientLight(16771569, 0.85);
@@ -28910,126 +29103,26 @@ scene.add(ambient);
 var dirLight = new DirectionalLight(16773350, 1);
 dirLight.position.set(8, 14, 6);
 scene.add(dirLight);
-var TILE_SIZE = 1;
-var board = buildBoard(scene, TILE_SIZE);
-var heartGoal = board.goalMarkers.find((goal) => goal.type === "heart") ?? null;
-var sadGoal = board.goalMarkers.find((goal) => goal.type === "sad") ?? null;
+var { TILE_SIZE: TILE_SIZE2, board, heartGoal, sadGoal, sadEmojis, sadEmojiCount, audio } = initGameSetup(scene);
 var zoomT = 0;
-var hasGameOver = false;
-var hasWon = false;
-var gameOverSound = new Audio("/audio/game_over.wav");
-var victorySound = new Audio("/audio/victory.wav");
-var jumpSound = new Audio("/audio/jump.wav");
-var musicLoop = new Audio("/audio/game_music_loop.wav");
-musicLoop.loop = true;
-musicLoop.volume = 0.4;
-jumpSound.volume = 0.6;
-victorySound.volume = 0.75;
-gameOverSound.volume = 0.75;
-var hasStartedMusic = false;
-var sadEmojis = new Group;
-sadEmojis.visible = false;
-scene.add(sadEmojis);
-var sadEmojiCount = 18;
-var modelLoader = new GLTFLoader;
-modelLoader.load("/model/sad_emoji.glb", (gltf) => {
-  const template = gltf.scene;
-  const box = new Box3().setFromObject(template);
-  const size = new Vector3;
-  box.getSize(size);
-  const desiredHeight = TILE_SIZE * 1.6;
-  const scale = size.y > 0 ? desiredHeight / size.y : 1;
-  const tint = new Color(3900150);
-  const spread = TILE_SIZE * 4.8;
-  for (let i = 0;i < sadEmojiCount; i++) {
-    const emoji = template.clone(true);
-    emoji.scale.setScalar(scale * (0.75 + Math.random() * 0.7));
-    emoji.position.set((Math.random() - 0.5) * spread * 2, TILE_SIZE * (0.5 + Math.random() * 1.2), (Math.random() - 0.5) * spread * 2);
-    emoji.rotation.y = Math.random() * Math.PI * 2;
-    emoji.traverse((child) => {
-      if (child instanceof Mesh) {
-        if (Array.isArray(child.material)) {
-          child.material = child.material.map((material) => {
-            const next = material.clone();
-            if ("color" in next && next.color) {
-              next.color.set(tint);
-            }
-            if ("emissive" in next && next.emissive) {
-              next.emissive.set(728391);
-            }
-            return next;
-          });
-        } else {
-          const next = child.material.clone();
-          if ("color" in next && next.color) {
-            next.color.set(tint);
-          }
-          if ("emissive" in next && next.emissive) {
-            next.emissive.set(728391);
-          }
-          child.material = next;
-        }
-      }
-    });
-    sadEmojis.add(emoji);
-  }
-}, undefined, (error) => {
-  console.warn("Failed to load sad emoji model", error);
+loadSadEmojis({
+  group: sadEmojis,
+  tileSize: TILE_SIZE2,
+  count: sadEmojiCount
 });
-var player = createPlayer(board.group, TILE_SIZE, {
-  modelUrl: "/model/player.glb",
-  onMoveStart: () => {
-    if (!hasStartedMusic) {
-      hasStartedMusic = true;
-      musicLoop.play().catch(() => {
-        return;
-      });
-    }
-    jumpSound.currentTime = 0;
-    jumpSound.play().catch(() => {
-      return;
-    });
+var player = createGamePlayer({
+  board,
+  tileSize: TILE_SIZE2,
+  audio,
+  goals: {
+    heartGoal,
+    sadGoal
   },
-  onMoveComplete: (pos) => {
-    if (hasGameOver || hasWon) {
-      return;
-    }
-    if (sadGoal && pos.x === sadGoal.gridX && pos.y === sadGoal.gridY) {
-      hasGameOver = true;
-      board.group.visible = false;
-      sadEmojis.visible = true;
-      document.body.classList.add("game-over");
-      if (titleElement) {
-        titleElement.textContent = "how could you do that";
-      }
-      gameOverSound.currentTime = 0;
-      gameOverSound.play().catch(() => {
-        return;
-      });
-      if (restartButton) {
-        restartButton.textContent = "play again";
-        restartButton.classList.remove("is-hidden");
-      }
-      hardButton?.classList.add("is-hidden");
-      return;
-    }
-    if (heartGoal && pos.x === heartGoal.gridX && pos.y === heartGoal.gridY) {
-      hasWon = true;
-      heartGoal.group.visible = false;
-      player.startDance();
-      victorySound.currentTime = 0;
-      victorySound.play().catch(() => {
-        return;
-      });
-      if (titleElement) {
-        titleElement.textContent = "I love you";
-      }
-      if (restartButton) {
-        restartButton.textContent = "play again";
-        restartButton.classList.remove("is-hidden");
-      }
-      hardButton?.classList.remove("is-hidden");
-    }
+  sadEmojis,
+  ui: {
+    restartButton,
+    hardButton,
+    titleElement
   }
 });
 var clock = new Clock;
@@ -29052,7 +29145,7 @@ function animate() {
 function onResize() {
   const width = window.innerWidth;
   const height = Math.round(window.innerHeight * 0.75);
-  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
   renderer.setSize(width, height);
   applyCameraViewport(camera, width, height);
 }
